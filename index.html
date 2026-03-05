@@ -280,13 +280,37 @@
 
 <div id="screen-sublesson" class="screen">
   <div class="header-actions">
-    <button class="back-btn" onclick="navTo('submodules')">⬅ Submódulos</button>
+    <button class="back-btn" id="sublesson-back-btn" onclick="navTo('submodules')">⬅ Submódulos</button>
     <span id="sublesson-step" style="color:var(--muted);font-size:14px;font-weight:600;"></span>
   </div>
   <h2 id="sublesson-title" style="font-size:20px;margin-bottom:20px;"></h2>
   <div id="sublesson-content"></div>
   <div id="sublesson-feedback" class="feedback-box"></div>
   <button id="sublesson-next-btn" class="btn" style="display:none;">Continuar</button>
+</div>
+
+<!-- Mini aula: apresenta palavra → questão contextualizada -->
+<div id="screen-minilesson" class="screen">
+  <div class="header-actions">
+    <button class="back-btn" onclick="navTo('submodules')">⬅ Submódulos</button>
+    <span id="mini-step" style="color:var(--muted);font-size:14px;font-weight:600;"></span>
+  </div>
+  <h2 id="mini-title" style="font-size:20px;margin-bottom:4px;"></h2>
+  <div id="mini-content"></div>
+  <div id="mini-feedback" class="feedback-box" style="display:none;"></div>
+  <button id="mini-next-btn" class="btn" style="display:none;margin-top:16px;">Continuar</button>
+</div>
+
+<!-- Prova final do módulo -->
+<div id="screen-finalexam" class="screen">
+  <div class="header-actions">
+    <button class="back-btn" onclick="navTo('submodules')">⬅ Módulo</button>
+    <span id="exam-step" style="color:var(--muted);font-size:14px;font-weight:600;"></span>
+  </div>
+  <h2 id="exam-title" style="font-size:20px;margin-bottom:20px;"></h2>
+  <div id="exam-content"></div>
+  <div id="exam-feedback" class="feedback-box"></div>
+  <button id="exam-next-btn" class="btn" style="display:none;">Continuar</button>
 </div>
 <div id="screen-dict" class="screen">
   <h2>Dicionário</h2>
@@ -855,7 +879,7 @@ function buildModulesList() {
     const isCompleted = userData.completedModules.includes(mod.id);
     const statusClass = isLocked ? 'locked' : (isCompleted ? 'completed' : 'unlocked');
     list.innerHTML += `
-      <div class="module-card ${statusClass}" style="flex-direction:column;align-items:stretch;gap:10px;" onclick="startLesson(${mod.id}, ${isLocked})">
+      <div class="module-card ${statusClass}" style="flex-direction:column;align-items:stretch;gap:10px;" onclick="openModuleHub(${mod.id}, ${isLocked})">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div class="module-info">
             <p>${mod.phase} · <span style="color:var(--accent);">${mod.cefr}</span></p>
@@ -863,7 +887,7 @@ function buildModulesList() {
           </div>
           <div style="font-size:24px;">${isLocked ? '🔒' : isCompleted ? '✅' : '▶️'}</div>
         </div>
-        ${!isLocked ? `<button onclick="event.stopPropagation();openSubmodules(${mod.id},'${mod.title}')" style="background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;text-align:left;">📚 Ver vocabulário temático</button>` : ''}
+
       </div>`;
   });
 }
@@ -871,6 +895,374 @@ function buildModulesList() {
 // ════════════════════════════════════════════════════════════
 //  FLUXO DE LIÇÃO
 // ════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════
+//  MODULE HUB — Grammar summary + submodules + final exam
+// ════════════════════════════════════════════════════════════
+function openModuleHub(modId, isLocked) {
+  if (isLocked) return;
+  const mod = modulesData.find(m => m.id === modId);
+  openSubmodules(modId, mod.title);
+}
+
+// ════════════════════════════════════════════════════════════
+//  MINI AULA — Apresenta palavra → questão contextualizada
+// ════════════════════════════════════════════════════════════
+let miniLesson = { subId: null, words: [], index: 0, phase: 'present', score: 0, questions: [] };
+let isMiniAnswered = false;
+
+const GEMINI_PRO_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
+const GEMINI_FLASH_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
+async function startMiniLesson(subId) {
+  const sub = submodulesData.find(s => s.id === subId);
+  if (!sub) return;
+
+  miniLesson = { subId, words: sub.words, index: 0, phase: 'present', score: 0, questions: [] };
+  isMiniAnswered = false;
+
+  document.getElementById('mini-title').innerText = sub.title;
+  document.getElementById('mini-feedback').style.display = 'none';
+  document.getElementById('mini-next-btn').style.display = 'none';
+
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-minilesson').classList.add('active');
+
+  // Generate contextual questions for each word via Gemini Flash
+  document.getElementById('mini-content').innerHTML = `<div style="text-align:center;padding:40px;"><div class="spinner"></div><p style="color:var(--muted);margin-top:16px;">Preparando mini aula...</p></div>`;
+  document.getElementById('mini-step').innerText = 'Carregando...';
+
+  await generateMiniQuestions(sub);
+  renderMiniStep();
+}
+
+async function generateMiniQuestions(sub) {
+  const wordList = sub.words.map(w => `${w.ru} = ${w.pt}`).join(', ');
+  const prompt = `Para cada palavra abaixo, gere UMA questão de múltipla escolha em português que use a palavra em contexto real e natural.
+
+Palavras: ${wordList}
+Gramática do tema: ${sub.grammar}
+
+Retorne APENAS array JSON. Cada objeto: {"word_ru":"стул","word_pt":"cadeira","question":"Como se diz 'Sente na cadeira'?","options":["Сядь на стул","Сядь на диван","Иди на стол","Ляг на стул"],"correct":0,"explain":"стул = cadeira, Сядь = sente (imperativo)"}
+- correct variado entre 0-3
+- opções plausíveis, erros comuns
+- question em português
+- explain curto em português
+
+JSON:`;
+
+  try {
+    const resp = await fetch(`${GEMINI_FLASH_URL}?key=${userData.apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 4096 }
+      })
+    });
+    if (!resp.ok) throw new Error('API error');
+    const data = await resp.json();
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    const raw = parts.map(p => p.text || '').join('');
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    const start = cleaned.indexOf('['), end = cleaned.lastIndexOf(']');
+    if (start !== -1 && end !== -1) {
+      const parsed = JSON.parse(cleaned.slice(start, end + 1));
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        miniLesson.questions = parsed;
+        return;
+      }
+    }
+  } catch(e) {
+    console.warn('Mini aula API falhou, usando fallback:', e);
+  }
+
+  // Fallback: generate simple questions from word list
+  miniLesson.questions = sub.words.map(w => ({
+    word_ru: w.ru, word_pt: w.pt,
+    question: `Como se usa "${w.ru}" (${w.pt})?`,
+    options: [w.ru, sub.words.find(x=>x.ru!==w.ru)?.ru||'слово', 'нет', 'да'],
+    correct: 0,
+    explain: `${w.ru} = ${w.pt}`
+  }));
+}
+
+function renderMiniStep() {
+  isMiniAnswered = false;
+  const content = document.getElementById('mini-content');
+  const feedback = document.getElementById('mini-feedback');
+  const nextBtn = document.getElementById('mini-next-btn');
+  feedback.style.display = 'none';
+  nextBtn.style.display = 'none';
+  content.innerHTML = '';
+
+  const total = miniLesson.questions.length;
+  const idx = miniLesson.index;
+
+  // All words done → go to practice quiz
+  if (idx >= total) {
+    const pct = Math.round(miniLesson.score / total * 100);
+    content.innerHTML = `
+      <div style="text-align:center;padding:30px;">
+        <div style="font-size:60px;margin-bottom:16px;">${pct>=70?'🎉':'💪'}</div>
+        <h2 style="color:var(--primary);">Mini aula concluída!</h2>
+        <p style="color:var(--muted);margin:8px 0 24px;">Você acertou ${miniLesson.score} de ${total} questões.</p>
+        <button class="btn" onclick="startSublesson('${miniLesson.subId}','')">
+          📝 Praticar com quiz completo
+        </button>
+      </div>`;
+    // Mark submodule as visited for mini lesson
+    if (!userData.completedSubmodules.includes(miniLesson.subId + '_mini')) {
+      userData.completedSubmodules.push(miniLesson.subId + '_mini');
+      saveData();
+    }
+    return;
+  }
+
+  const q = miniLesson.questions[idx];
+  document.getElementById('mini-step').innerText = `Palavra ${idx + 1} de ${total}`;
+
+  // ── PHASE: PRESENT word ──
+  if (miniLesson.phase === 'present') {
+    const wordWrapped = wrapWordsWithTooltip(q.word_ru, false, { [q.word_ru]: q.word_pt });
+    content.innerHTML = `
+      <div style="background:var(--card);border-radius:16px;padding:28px 24px;text-align:center;margin-bottom:24px;border:1px solid var(--accent);">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px;">Nova palavra</div>
+        <div style="font-size:42px;font-weight:700;color:var(--text);margin-bottom:8px;">${q.word_ru}</div>
+        <div style="font-size:22px;color:var(--accent);margin-bottom:20px;">${q.word_pt}</div>
+        <button onclick="speakRU('${q.word_ru.replace(/'/g,"\'")}'); this.textContent='🔊 Ouvindo...'; setTimeout(()=>this.textContent='🔊 Ouvir',1500);" 
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 24px;border-radius:10px;font-size:16px;cursor:pointer;">
+          🔊 Ouvir
+        </button>
+      </div>
+      <p style="color:var(--muted);font-size:14px;text-align:center;">Memorize esta palavra — você vai precisar dela agora!</p>`;
+
+    nextBtn.style.display = 'block';
+    nextBtn.innerText = 'Entendi, testar! →';
+    nextBtn.onclick = () => {
+      miniLesson.phase = 'quiz';
+      renderMiniStep();
+    };
+    speakRU(q.word_ru);
+
+  // ── PHASE: QUIZ ──
+  } else {
+    const questionText = wrapWordsWithTooltip(q.question, false, { [q.word_ru]: q.word_pt });
+    content.innerHTML = `
+      <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.2);border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--accent);font-weight:600;">
+        💡 Lembre: <strong>${q.word_ru}</strong> = ${q.word_pt}
+      </div>`;
+
+    const h3 = document.createElement('h3');
+    h3.style.cssText = 'font-size:20px;margin-bottom:20px;line-height:1.5;';
+    h3.innerHTML = questionText;
+    content.appendChild(h3);
+
+    const optsContainer = document.createElement('div');
+    const options = q.options.map((opt, idx) => ({ text: opt, isCorrect: idx === q.correct }));
+    shuffle(options).forEach(opt => {
+      const btn = document.createElement('button');
+      btn.className = 'option-btn';
+      btn.textContent = opt.text;
+      btn.onclick = () => {
+        if (isMiniAnswered) return;
+        isMiniAnswered = true;
+        optsContainer.querySelectorAll('.option-btn').forEach(b => { b.disabled = true; b.style.pointerEvents='none'; });
+        const fb = document.getElementById('mini-feedback');
+        fb.style.display = 'block';
+        if (opt.isCorrect) {
+          btn.classList.add('correct');
+          miniLesson.score++;
+          fb.innerHTML = `<div class="feedback-title" style="color:var(--primary);">✅ Correto!</div><p>${q.explain}</p>`;
+          speakRU(q.word_ru);
+        } else {
+          btn.classList.add('wrong');
+          // Highlight correct
+          optsContainer.querySelectorAll('.option-btn').forEach((b,i) => {
+            if (b.textContent === q.options[q.correct]) b.classList.add('correct');
+          });
+          fb.innerHTML = `<div class="feedback-title" style="color:var(--error);">❌ Incorreto</div><p>${q.explain}</p>`;
+        }
+        nextBtn.style.display = 'block';
+        nextBtn.innerText = idx + 1 < miniLesson.questions.length ? 'Próxima palavra →' : 'Ver resultado';
+        nextBtn.onclick = () => {
+          miniLesson.index++;
+          miniLesson.phase = 'present';
+          renderMiniStep();
+        };
+      };
+      optsContainer.appendChild(btn);
+    });
+    content.appendChild(optsContainer);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  PROVA FINAL DO MÓDULO
+// ════════════════════════════════════════════════════════════
+let finalExam = { modId: null, questions: [], qIndex: 0, score: 0 };
+let isExamAnswered = false;
+
+async function startFinalExam(modId) {
+  finalExam = { modId, questions: [], qIndex: 0, score: 0 };
+  isExamAnswered = false;
+
+  const mod = modulesData.find(m => m.id === modId);
+  document.getElementById('exam-title').innerText = '🎓 ' + mod.title;
+  document.getElementById('exam-step').innerText = 'Carregando...';
+  document.getElementById('exam-content').innerHTML = `<div style="text-align:center;padding:40px;"><div class="spinner"></div><p style="color:var(--muted);margin-top:16px;">Gerando prova final com IA...</p></div>`;
+  document.getElementById('exam-feedback').style.display = 'none';
+  document.getElementById('exam-next-btn').style.display = 'none';
+
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-finalexam').classList.add('active');
+
+  // Collect all words seen in mini lessons for this module
+  const modSubs = submodulesData.filter(s => s.modId === modId);
+  const allWords = modSubs.flatMap(s => s.words);
+  const wordList = allWords.slice(0, 25).map(w => `${w.ru} (${w.pt})`).join(', ');
+
+  const prompt = `Você é professor de russo. Gere 15 questões de múltipla escolha para a PROVA FINAL do módulo "${mod.title}" (nível ${mod.cefr}).
+
+REGRAS OBRIGATÓRIAS:
+- Use APENAS estas palavras que o aluno estudou: ${wordList}
+- Nível ESTRITO ${mod.cefr}: ${mod.cefr==='A1'?'presente+imperativo, SEM aspectos':mod.cefr==='A2'?'passado+futuro budu+inf':mod.cefr==='B1'?'aspectos+genitivo plural':'condicional+voz passiva'}
+- Misture cloze e translate
+- correct variado entre 0-3
+
+Retorne APENAS array JSON. Cada objeto: {type,text,options:[4],correct:0-3,explain,hint,words:{ru:pt}}
+
+JSON:`;
+
+  try {
+    const resp = await fetch(`${GEMINI_PRO_URL}?key=${userData.apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 8192 }
+      })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const raw = parts.map(p => p.text || '').join('');
+      const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, '').trim();
+      const start = cleaned.indexOf('['), end = cleaned.lastIndexOf(']');
+      if (start !== -1 && end !== -1) {
+        const parsed = JSON.parse(cleaned.slice(start, end + 1));
+        const valid = parsed.filter(q => q.type && q.text && Array.isArray(q.options) && q.options.length >= 4 && typeof q.correct === 'number');
+        if (valid.length >= 8) {
+          finalExam.questions = valid.slice(0, 15);
+          renderExamQuestion();
+          return;
+        }
+      }
+    }
+  } catch(e) { console.warn('Prova final API falhou:', e); }
+
+  // Fallback: use module fallback questions
+  finalExam.questions = shuffle(getFallbackQuestions(3, modId).concat(getFallbackQuestions(4, modId))).slice(0, 15);
+  renderExamQuestion();
+}
+
+function renderExamQuestion() {
+  isExamAnswered = false;
+  const content = document.getElementById('exam-content');
+  const feedback = document.getElementById('exam-feedback');
+  const nextBtn = document.getElementById('exam-next-btn');
+  feedback.style.display = 'none';
+  nextBtn.style.display = 'none';
+  content.innerHTML = '';
+
+  const total = finalExam.questions.length;
+  const idx = finalExam.qIndex;
+
+  if (idx >= total) {
+    const pct = Math.round(finalExam.score / total * 100);
+    const passed = pct >= 70;
+    content.innerHTML = `
+      <div style="text-align:center;padding:30px;">
+        <div style="font-size:64px;margin-bottom:16px;">${passed ? '🏆' : '📖'}</div>
+        <h2 style="color:${passed ? 'var(--primary)' : 'var(--error)'};">${pct}% de Acerto</h2>
+        <p style="color:var(--muted);margin:8px 0 24px;">Você acertou ${finalExam.score} de ${total} questões. ${passed ? 'Módulo concluído!' : 'Precisa de 70% para passar.'}</p>
+        ${passed ? `<button class="btn" onclick="completeModule(${finalExam.modId})">✅ Concluir Módulo</button>` :
+          `<button class="btn btn-outline" onclick="startFinalExam(${finalExam.modId})">🔄 Refazer Prova</button>`}
+      </div>`;
+
+    // Record stats
+    const mid = String(finalExam.modId);
+    if (!userData.moduleStats[mid]) userData.moduleStats[mid] = { attempts: 0, scores: [], lastAttempt: 0 };
+    userData.moduleStats[mid].attempts++;
+    userData.moduleStats[mid].scores.push(pct);
+    userData.moduleStats[mid].lastAttempt = Date.now();
+    saveData();
+    return;
+  }
+
+  const q = finalExam.questions[idx];
+  document.getElementById('exam-step').innerText = `Questão ${idx + 1} / ${total}`;
+
+  const displayQ = wrapWordsWithTooltip(q.text, true, q.words || {});
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = `<h3 style="font-size:20px;margin-bottom:10px;line-height:1.6;">${displayQ}</h3>`;
+
+  const trRow = document.createElement('div');
+  trRow.style.marginBottom = '16px';
+  const trBtn = document.createElement('button');
+  trBtn.className = 'translate-btn';
+  trBtn.textContent = '🌐 Traduzir frase';
+  const trResult = document.createElement('div');
+  trResult.className = 'translation-result';
+  trBtn.onclick = () => translateSentence(q.text || '', trResult);
+  trRow.appendChild(trBtn);
+  trRow.appendChild(trResult);
+  wrapper.appendChild(trRow);
+  content.appendChild(wrapper);
+
+  const optsContainer = document.createElement('div');
+  optsContainer.id = 'exam-options';
+  const options = q.options.map((opt, i) => ({ text: opt, isCorrect: i === q.correct }));
+  shuffle(options).forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.textContent = opt.text;
+    btn.onclick = () => {
+      if (isExamAnswered) return;
+      isExamAnswered = true;
+      optsContainer.querySelectorAll('.option-btn').forEach(b => { b.disabled = true; b.style.pointerEvents = 'none'; });
+      const fb = document.getElementById('exam-feedback');
+      fb.style.display = 'block';
+      if (opt.isCorrect) {
+        btn.classList.add('correct');
+        finalExam.score++;
+        fb.innerHTML = `<div class="feedback-title" style="color:var(--primary);">✅ Correto!</div><p>${q.explain}</p>`;
+        if (q.type === 'cloze') speakRU(q.text.replace('____', q.options[q.correct]));
+      } else {
+        btn.classList.add('wrong');
+        optsContainer.querySelectorAll('.option-btn').forEach(b => {
+          if (b.textContent === q.options[q.correct]) b.classList.add('correct');
+        });
+        fb.innerHTML = `<div class="feedback-title" style="color:var(--error);">❌ Incorreto</div><p>${q.explain}</p><p style="color:var(--accent);font-size:13px;margin-top:6px;">💡 ${q.hint||''}</p>`;
+      }
+      const nb = document.getElementById('exam-next-btn');
+      if (nb) { nb.style.display = 'block'; nb.textContent = idx + 1 < total ? 'Próxima →' : 'Ver resultado'; nb.onclick = () => { finalExam.qIndex++; renderExamQuestion(); }; }
+    };
+    optsContainer.appendChild(btn);
+  });
+  content.appendChild(optsContainer);
+
+  if (q.type === 'cloze') speakRU(q.text.replace('____', '...'));
+}
+
+function completeModule(modId) {
+  if (!userData.completedModules.includes(modId)) {
+    userData.completedModules.push(modId);
+    saveData();
+  }
+  navTo('home');
+}
+
 function startLesson(modId, isLocked) {
   if (isLocked) return;
   currentLesson = { modId, step: 1, questions: [], qIndex: 0, score: 0 };
@@ -1150,15 +1542,7 @@ function showResultScreen() {
   const total = currentLesson.questions.length;
   const pct   = Math.round((currentLesson.score / total) * 100);
 
-  // Record stats for this module/step
-  if (currentLesson.step >= 3) {
-    const mid = String(currentLesson.modId);
-    if (!userData.moduleStats[mid]) userData.moduleStats[mid] = { attempts: 0, scores: [], lastAttempt: 0 };
-    userData.moduleStats[mid].attempts++;
-    userData.moduleStats[mid].scores.push(pct);
-    userData.moduleStats[mid].lastAttempt = Date.now();
-    saveData();
-  }
+  // Stats now recorded in finalExam
 
   content.innerHTML = `
     <h2 style="text-align:center; font-size:30px;">${pct}% de Acerto</h2>
@@ -1521,18 +1905,55 @@ function openSubmodules(modId, modTitle) {
   document.getElementById('submod-parent-title').innerText = '📚 ' + modTitle;
   const list = document.getElementById('submodules-list');
   list.innerHTML = '';
+
+  // ── Grammar summary ──
+  const grammar = grammarDB[String(modId)];
+  if (grammar) {
+    list.innerHTML += `<div class="grammar-section" style="margin-bottom:24px;">${grammar}</div>`;
+  }
+
+  // ── Submodule cards ──
+  list.innerHTML += `<h3 style="color:var(--accent);margin-bottom:12px;font-size:15px;">📖 Submódulos — aprenda e pratique</h3>`;
   const modSubs = submodulesData.filter(s => s.modId === modId);
   modSubs.forEach(sub => {
-    const subDone = (userData.completedSubmodules||[]).includes(sub.id);
+    const miniDone = (userData.completedSubmodules||[]).includes(sub.id + '_mini');
+    const quizDone = (userData.completedSubmodules||[]).includes(sub.id);
+    const status = quizDone ? 'completed' : 'unlocked';
     list.innerHTML += `
-      <div class="module-card ${subDone ? 'completed' : 'unlocked'}" onclick="startSublesson('${sub.id}','${sub.title.replace(/'/g,"\\'")}')">
-        <div class="module-info">
-          <p style="color:var(--muted);font-size:13px;">${sub.words.length} palavras · Sem nota mínima</p>
-          <h3 style="font-size:16px;">${sub.title}</h3>
+      <div class="module-card ${status}" style="flex-direction:column;align-items:stretch;gap:8px;cursor:default;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <p style="color:var(--muted);font-size:12px;margin-bottom:2px;">${sub.words.length} palavras · ${sub.grammar}</p>
+            <h3 style="font-size:16px;">${sub.title}</h3>
+          </div>
+          <div style="font-size:20px;">${quizDone ? '✅' : miniDone ? '📝' : '📖'}</div>
         </div>
-        <div style="font-size:20px;">${subDone ? '✅' : '▶️'}</div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="startMiniLesson('${sub.id}')" style="flex:1;background:var(--accent);color:var(--bg);border:none;padding:8px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">
+            ${miniDone ? '🔄 Rever aula' : '📖 Mini aula'}
+          </button>
+          <button onclick="startSublesson('${sub.id}','${sub.title.replace(/'/g,"\\'")}')" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
+            ${quizDone ? '🔄 Praticar' : '📝 Quiz'}
+          </button>
+        </div>
       </div>`;
   });
+
+  // ── Final exam button ──
+  const minisDone = modSubs.filter(s => (userData.completedSubmodules||[]).includes(s.id + '_mini')).length;
+  const examUnlocked = minisDone >= Math.ceil(modSubs.length / 2);
+  const modDone = userData.completedModules.includes(modId);
+  list.innerHTML += `
+    <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);">
+      ${modDone
+        ? `<div style="text-align:center;padding:16px;color:var(--primary);font-weight:700;">✅ Módulo concluído!</div>`
+        : examUnlocked
+          ? `<button class="btn" onclick="startFinalExam(${modId})" style="width:100%;">🎓 Prova Final do Módulo</button>
+             <p style="text-align:center;color:var(--muted);font-size:12px;margin-top:8px;">Precisa de 70% para passar · Só palavras que você estudou</p>`
+          : `<button class="btn" disabled style="width:100%;opacity:0.4;cursor:not-allowed;">🎓 Prova Final — faça ${Math.ceil(modSubs.length/2) - minisDone} mini aula(s) para liberar</button>`
+      }
+    </div>`;
+
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-submodules').classList.add('active');
 }
