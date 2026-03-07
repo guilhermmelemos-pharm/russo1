@@ -1,15 +1,3 @@
-# 🇷🇺 Curso de Russo — Gemini Edition
-
-App de aprendizado de russo baseado em Input Compreensível (i+1), geração dinâmica de questões via Gemini API e repetição espaçada (SRS). Funciona 100% no browser, sem backend, sem dependências externas.
-
-## 🚀 Como usar
-
-### GitHub Pages
-1. Faça upload do `index.html` no repositório
-2. Vá em **Settings → Pages → Branch: main → / (root)**
-3. Acesse a URL gerada pelo GitHub Pages
-4. Na aba **API Key**, insira sua chave do [Google AI Studio](https://aistudio.google.com)
-
 ### Local
 Abra o `index.html` diretamente no browser. Não precisa de servidor.
 
