@@ -224,6 +224,16 @@
       <button class="btn btn-outline" onclick="closeApiModal()">Cancelar</button>
       <button class="btn" onclick="saveApiKey()">Salvar Chave</button>
     </div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:20px 0;">
+    <h3>💾 Progresso</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">Exporte para fazer backup ou transferir para outro dispositivo.</p>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-outline" onclick="exportProgress()" style="flex:1;">⬆️ Exportar</button>
+      <button class="btn btn-outline" onclick="document.getElementById('import-file').click()" style="flex:1;">⬇️ Importar</button>
+    </div>
+    <input type="file" id="import-file" accept=".json" style="display:none;" onchange="importProgress(event)">
+    <div id="import-status" style="font-size:13px;margin-top:10px;text-align:center;"></div>
   </div>
 </div>
 
@@ -334,6 +344,13 @@
   <div id="review-content" style="margin-top: 20px;"></div>
 </div>
 
+<div id="screen-exam" class="screen">
+  <h2>🎓 Provas de Certificação</h2>
+  <p style="color:var(--muted);margin-bottom:20px;line-height:1.5;">Provas opcionais baseadas no padrão CEFR. Aprovação com 70%. Gera certificado ao passar.</p>
+  <div id="exam-menu"></div>
+  <div id="cert-exam-content" style="margin-top:20px;"></div>
+</div>
+
 <div id="screen-grammar" class="screen">
   <h2>Biblioteca Gramatical</h2>
   <div id="grammar-list"></div>
@@ -353,12 +370,35 @@
   <button class="nav-btn" onclick="navTo('grammar')">
     <span class="nav-icon">📖</span><span>Gramática</span>
   </button>
+  <button class="nav-btn" onclick="navTo('exam')">
+    <span class="nav-icon">🎓</span><span>Provas</span>
+  </button>
   <button class="nav-btn" onclick="openApiModal()">
     <span class="nav-icon">🔑</span><span>API Key</span>
   </button>
 </nav>
 
 <script>
+// ── Toast notification ──
+function showToast(msg, duration) {
+  duration = duration || 3000;
+  let el = document.getElementById('app-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'app-toast';
+    el.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:#1e1e2e;color:#e2e8f0;padding:10px 20px;border-radius:20px;font-size:14px;z-index:9999;opacity:0;transition:all .3s;pointer-events:none;max-width:90vw;text-align:center;border:1px solid rgba(255,255,255,0.1);box-shadow:0 4px 20px rgba(0,0,0,.4);';
+    document.body.appendChild(el);
+  }
+  clearTimeout(el._timer);
+  el.textContent = msg;
+  el.style.opacity = '1';
+  el.style.transform = 'translateX(-50%) translateY(0)';
+  el._timer = setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateX(-50%) translateY(20px)';
+  }, duration);
+}
+
 // ════════════════════════════════════════════════════════════
 //  DADOS DOS MÓDULOS
 // ════════════════════════════════════════════════════════════
@@ -610,6 +650,42 @@ function saveApiKey() {
   saveData();
   closeApiModal();
   updateApiStatus();
+}
+
+function exportProgress() {
+  const data = JSON.parse(localStorage.getItem('russo_user') || '{}');
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'russo_progresso_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('✅ Progresso exportado!', 3000);
+}
+
+function importProgress(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.completedModules && !data.learnedWords && !data.streak === undefined) {
+        document.getElementById('import-status').innerHTML = '<span style="color:var(--error);">❌ Arquivo inválido</span>';
+        return;
+      }
+      // Preserve current API key if not in import
+      if (!data.apiKey && userData.apiKey) data.apiKey = userData.apiKey;
+      localStorage.setItem('russo_user', JSON.stringify(data));
+      document.getElementById('import-status').innerHTML = '<span style="color:#22c55e;">✅ Importado! Recarregando...</span>';
+      setTimeout(() => location.reload(), 1500);
+    } catch(err) {
+      document.getElementById('import-status').innerHTML = '<span style="color:var(--error);">❌ Erro ao ler arquivo</span>';
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
 }
 
 function updateApiStatus() {
@@ -1043,10 +1119,10 @@ function sleep(ms) {
 //  TTS
 // ════════════════════════════════════════════════════════════
 function initTTS() {
-  const voices = window.speechSynthesis.getVoices();
+  const voices = (window.speechSynthesis ? window.speechSynthesis.getVoices() : []);
   russianVoice = voices.find(v => v.lang === 'ru-RU') || null;
 }
-if (speechSynthesis.onvoiceschanged !== undefined) {
+if (typeof speechSynthesis !== "undefined" && speechSynthesis.onvoiceschanged !== undefined) {
   speechSynthesis.onvoiceschanged = initTTS;
 }
 
@@ -1058,12 +1134,12 @@ function speakRU(text) {
   const msg = new SpeechSynthesisUtterance(cleanText);
   msg.lang = 'ru-RU';
   // Tenta voz russa, senao usa qualquer voz disponivel com lang ru
-  const voices = window.speechSynthesis.getVoices();
+  const voices = (window.speechSynthesis ? window.speechSynthesis.getVoices() : []);
   const ruVoice = voices.find(v => v.lang.startsWith('ru')) || russianVoice || null;
   if (ruVoice) msg.voice = ruVoice;
   msg.rate = 0.85;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(msg);
+  (window.speechSynthesis && window.speechSynthesis.cancel());
+  (window.speechSynthesis && window.speechSynthesis.speak(msg));
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1143,6 +1219,8 @@ function navTo(screenId) {
   if (screenId === 'home') { buildModulesList(); renderHomeStats(); }
   if (screenId === 'review')  buildReview();
   if (screenId === 'grammar') buildGrammarLib();
+  if (screenId === 'exam' && !_exam.generating && _exam.idx === 0 && _exam.questions.length === 0) buildExamMenu();
+  else if (screenId === 'exam' && _exam.questions.length === 0) buildExamMenu();
   if (screenId === 'dict') showAllDictWords();
 }
 
@@ -2613,380 +2691,197 @@ let reviewSession = { questions: [], qIndex: 0 };
 let isReviewAnswered = false;
 
 function buildReview() {
-  const status  = document.getElementById('review-status');
   const content = document.getElementById('review-content');
-  content.innerHTML = '';
+  document.getElementById('review-status').style.display = 'none';
 
-  // ── SRS Pendentes ──
-  const dueSRS = getDueSRS();
-  if (dueSRS.length > 0) {
-    const srsHtml = `
-      <div style="background:var(--card);border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid var(--accent);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <span style="font-size:15px;font-weight:700;color:var(--accent);">🧠 Revisão Pendente</span>
-          <span style="background:var(--accent);color:#000;border-radius:20px;padding:2px 10px;font-size:12px;font-weight:700;">${dueSRS.length} palavras</span>
-        </div>
-        <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">Estas palavras precisam ser revisadas hoje para fixar na memória:</p>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-          ${dueSRS.slice(0,10).map(e => `<span style="background:rgba(212,175,55,0.15);border:1px solid var(--accent);border-radius:8px;padding:4px 10px;font-size:13px;color:var(--text);">${e.word}</span>`).join('')}
-          ${dueSRS.length > 10 ? `<span style="color:var(--muted);font-size:12px;padding:4px;">+${dueSRS.length-10} mais</span>` : ''}
-        </div>
-        <button class="btn" onclick="startSRSReview()" style="width:100%;padding:10px;">
-          📚 Iniciar Revisão Espaçada (${dueSRS.length})
-        </button>
-      </div>`;
-    content.insertAdjacentHTML('beforeend', srsHtml);
-  }
+  const errorCount = (userData.errorBank || []).length;
+  const pool = _getReviewPool();
 
-  // ── Module Stats ──
-  const statsHtml = modulesData.map(mod => {
-    const s = userData.moduleStats[String(mod.id)];
-    if (!s || !s.attempts) return '';
-    const avg = Math.round(s.scores.reduce((a,b)=>a+b,0)/s.scores.length);
-    const best = Math.max(...s.scores);
-    const trend = s.scores.length > 1
-      ? (s.scores[s.scores.length-1] >= s.scores[s.scores.length-2] ? '📈' : '📉')
-      : '';
-    const barColor = avg >= 80 ? 'var(--primary)' : avg >= 60 ? 'var(--accent)' : 'var(--error)';
-    return `
-      <div style="background:var(--card);border-radius:10px;padding:12px 16px;margin-bottom:8px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <span style="font-size:13px;font-weight:600;">${mod.title.replace('Módulo ','M').split(':')[0]+':'+mod.title.split(':')[1]}</span>
-          <span style="font-size:12px;color:var(--muted);">${trend} ${s.attempts}x · melhor ${best}%</span>
-        </div>
-        <div style="height:5px;background:var(--border);border-radius:3px;">
-          <div style="height:5px;background:${barColor};border-radius:3px;width:${avg}%;transition:width 0.5s;"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Média: ${avg}%</div>
-      </div>`;
-  }).join('');
+  content.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div style="padding:14px;background:var(--surface);border-radius:10px;font-size:14px;color:var(--muted);">
+        📖 <strong style="color:var(--text);">${pool.length}</strong> questões disponíveis no banco
+      </div>
 
-  const hasStats = Object.keys(userData.moduleStats).length > 0;
-  const hasCompleted = userData.completedModules.length > 0;
+      <button onclick="startMainReview()"
+        style="background:var(--primary);color:#000;border:none;padding:18px;border-radius:14px;font-size:16px;font-weight:700;cursor:pointer;text-align:left;">
+        🧠 Revisão Adaptativa
+        <div style="font-size:13px;font-weight:400;margin-top:4px;opacity:0.8;">10 questões dos módulos concluídos · prioriza seus erros</div>
+      </button>
 
-  status.innerHTML = `
-    ${hasStats ? `<h3 style="margin-bottom:12px;color:var(--accent);">📊 Estatísticas por Módulo</h3>${statsHtml}` : ''}
-
-    <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;">
-      ${hasCompleted ? `
-        <button class="btn" onclick="startReviewSession('quick')" style="flex:1;min-width:140px;">
-          ⚡ Revisão Rápida<br><small style="font-weight:400;font-size:12px;">10 questões aleatórias</small>
-        </button>` : ''}
-      ${userData.errorBank.length > 0 ? `
-        <button class="btn btn-outline" onclick="startReviewSession('spaced')" style="flex:1;min-width:140px;">
-          🧠 Central de Erros<br><small style="font-weight:400;font-size:12px;">${userData.errorBank.length} questões · por prioridade</small>
-        </button>` : `
-        <div style="text-align:center;padding:20px;color:var(--primary);font-size:14px;">🎉 Nenhum erro pendente!</div>`}
+      ${errorCount > 0 ? `
+      <button onclick="startErrorReview()"
+        style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);color:var(--text);padding:18px;border-radius:14px;font-size:16px;font-weight:700;cursor:pointer;text-align:left;">
+        ❌ Revisar Erros
+        <div style="font-size:13px;font-weight:400;margin-top:4px;color:var(--muted);">${errorCount} questões que você errou</div>
+      </button>` : `
+      <div style="padding:12px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:10px;color:#22c55e;font-size:13px;text-align:center;">
+        ✅ Sem erros pendentes
+      </div>`}
     </div>`;
 }
 
-function startSRSReview() {
-  const due = getDueSRS();
-  if (due.length === 0) { showToast('✅ Nenhuma palavra pendente!', 3000); return; }
-
-  // Build a quick flash card session with due words
-  const content = document.getElementById('review-content');
-  let currentIdx = 0;
-
-  function showCard(idx) {
-    if (idx >= due.length) {
-      content.innerHTML = `<div style="text-align:center;padding:40px;">
-        <div style="font-size:60px;">🎉</div>
-        <h2 style="color:var(--primary);margin:16px 0;">Revisão concluída!</h2>
-        <p style="color:var(--muted);">Você revisou ${due.length} palavras.</p>
-        <button class="btn" onclick="buildReview()" style="margin-top:20px;width:100%;">Voltar</button>
-      </div>`;
-      return;
-    }
-    const entry = due[idx];
-    const knownWord = userData.learnedWords?.find(w => w.ru === entry.word);
-    const pt = knownWord?.pt || '?';
-    content.innerHTML = `
-      <div style="text-align:center;padding:20px;">
-        <div style="color:var(--muted);font-size:13px;margin-bottom:8px;">${idx+1} / ${due.length}</div>
-        <div style="background:var(--card);border-radius:16px;padding:32px;margin-bottom:20px;border:1px solid var(--border);">
-          <div style="font-size:48px;font-weight:700;margin-bottom:8px;">${entry.word}</div>
-          <button onclick="speakRU('${entry.word.replace(/'/g,"\'")}'); this.textContent='🔊 Ouvindo...'; setTimeout(()=>this.textContent='🔊 Ouvir',1500);"
-            style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 20px;border-radius:8px;cursor:pointer;margin-bottom:16px;">
-            🔊 Ouvir
-          </button>
-          <div id="srs-answer" style="display:none;font-size:22px;color:var(--accent);margin-top:8px;">${pt}</div>
-        </div>
-        <button onclick="document.getElementById('srs-answer').style.display='block'; document.getElementById('srs-btns').style.display='flex';"
-          class="btn" style="width:100%;margin-bottom:12px;" id="srs-reveal-btn">
-          👁 Ver tradução
-        </button>
-        <div id="srs-btns" style="display:none;gap:12px;">
-          <button onclick="saveProgress('${entry.word.replace(/'/g,"\'")}', false); showCard(${idx+1});"
-            style="flex:1;background:rgba(239,68,68,0.15);border:1px solid var(--error);color:var(--error);padding:12px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">
-            ❌ Errei
-          </button>
-          <button onclick="saveProgress('${entry.word.replace(/'/g,"\'")}', true); showCard(${idx+1});"
-            style="flex:1;background:rgba(34,197,94,0.15);border:1px solid #22c55e;color:#22c55e;padding:12px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">
-            ✅ Acertei
-          </button>
-        </div>
-      </div>`;
+function _getReviewPool() {
+  const pool = [];
+  const seen = new Set();
+  // Scan all localStorage keys for cached question banks
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    if (!key.startsWith('sub_pool_') && !key.startsWith('mini_q_')) continue;
+    try {
+      const qs = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!Array.isArray(qs)) continue;
+      for (const q of qs) {
+        if (!Array.isArray(q.options) || q.options.length < 2) continue;
+        if (typeof q.correct !== 'number') continue;
+        const uid = q.text || q.question || '';
+        if (!uid || seen.has(uid)) continue;
+        seen.add(uid);
+        pool.push(q);
+      }
+    } catch(e) {}
   }
-  showCard(0);
+  return pool;
 }
 
-function startReviewSession(mode) {
-  let pool;
-  if (mode === 'quick') {
-    // Quick review: random from completed modules
-    const completedIds = userData.completedModules;
-    const allCached = Object.entries(questionCache)
-      .filter(([k]) => completedIds.includes(parseInt(k.split('_')[0])))
-      .flatMap(([,qs]) => qs);
-    const saved = JSON.parse(localStorage.getItem('russo_questions') || '[]');
-    const combined = [...allCached, ...saved].filter((q,i,a) => a.findIndex(x=>x.text===q.text)===i);
-    pool = combined.length >= 5 ? shuffle(combined).slice(0, 10)
-      : shuffle(userData.errorBank.map(e => e.qObj)).slice(0, 10);
-  } else {
-    // Spaced: sort by priority score (most wrong + oldest = highest priority)
-    const now = Date.now();
-    const sorted = [...userData.errorBank].sort((a, b) => {
-      const scoreA = (a.wrongCount || 1) * 1000 + (now - (a.lastWrong || 0)) / 60000;
-      const scoreB = (b.wrongCount || 1) * 1000 + (now - (b.lastWrong || 0)) / 60000;
-      return scoreB - scoreA;
-    });
-    pool = sorted.slice(0, 10);
+function startMainReview() {
+  const pool = _getReviewPool();
+  if (pool.length === 0) {
+    showToast('Conclua pelo menos um submódulo primeiro!', 4000);
+    return;
   }
-  reviewSession.questions = pool;
-  reviewSession.mode = mode || 'spaced';
-  reviewSession.qIndex = 0;
-  reviewSession.score = 0;
+  // Prioritize error bank items
+  const errorTexts = new Set((userData.errorBank || []).map(e => e.qObj?.text || e.qObj?.question || '').filter(Boolean));
+  const errored = pool.filter(q => errorTexts.has(q.text || q.question || ''));
+  const normal  = shuffle(pool.filter(q => !errorTexts.has(q.text || q.question || '')));
+  const session = [...shuffle(errored), ...normal].slice(0, 10);
+  _runReviewSession(session, 'adaptativa');
+}
+
+function startErrorReview() {
+  const errors = (userData.errorBank || []).filter(e => e.qObj && Array.isArray(e.qObj.options));
+  if (errors.length === 0) { showToast('Nenhum erro pendente!', 3000); return; }
+  const pool = errors.sort((a, b) => (b.wrongCount || 1) - (a.wrongCount || 1)).slice(0, 30).map(e => e.qObj);
+  _runReviewSession(pool, 'erros');
+}
+
+let _rev = { questions: [], idx: 0, score: 0, mode: '' };
+
+function _runReviewSession(questions, mode) {
+  _rev = { questions, idx: 0, score: 0, mode };
   document.getElementById('review-status').style.display = 'none';
-  renderReviewQuestion();
+  _renderRevQ();
 }
 
-function renderReviewQuestion() {
-  isReviewAnswered = false;
+function _renderRevQ() {
   const content = document.getElementById('review-content');
-  content.innerHTML = '';
-
-  if (reviewSession.qIndex >= reviewSession.questions.length) {
-    const pct = reviewSession.questions.length > 0
-      ? Math.round((reviewSession.score||0) / reviewSession.questions.length * 100) : 0;
+  if (_rev.idx >= _rev.questions.length) {
+    const pct = Math.round(_rev.score / _rev.questions.length * 100);
     content.innerHTML = `
       <div style="text-align:center;padding:30px;">
-        <div style="font-size:56px;margin-bottom:12px;">${pct>=80?'🏆':pct>=60?'💪':'📖'}</div>
-        <h2 style="color:var(--primary);">Sessão Concluída!</h2>
-        <p style="color:var(--muted);margin:8px 0 20px;">${pct}% de acerto nesta sessão</p>
-        <button class="btn btn-outline" onclick="navTo('review')">Ver Estatísticas</button>
+        <div style="font-size:60px;margin-bottom:12px;">${pct>=80?'🏆':pct>=60?'💪':'📖'}</div>
+        <h2 style="color:var(--primary);">Sessão concluída!</h2>
+        <p style="color:var(--muted);margin:8px 0 24px;">${_rev.score}/${_rev.questions.length} corretas (${pct}%)</p>
+        <button class="btn" onclick="startMainReview()" style="width:100%;margin-bottom:10px;">🔄 Nova sessão</button>
+        <button class="btn btn-outline" onclick="buildReview()" style="width:100%;">← Voltar</button>
       </div>`;
-    document.getElementById('review-status').style.display = 'block';
-    buildReview();
     return;
   }
 
-  const rawItem   = reviewSession.questions[reviewSession.qIndex];
-  // Support both errorBank items {qObj, streak} and direct question objects
-  const errorItem = rawItem.qObj ? rawItem : { qObj: rawItem, streak: null, id: null };
-  const qObj      = errorItem.qObj;
+  const q = _rev.questions[_rev.idx];
+  if (!q) { _rev.idx++; _renderRevQ(); return; }
 
-  const isSpaced  = reviewSession.mode === 'spaced' && errorItem.streak !== null;
-  const headerText = isSpaced
-    ? `<div style="font-size:13px;color:var(--accent);margin-bottom:15px;font-weight:600;">🧠 Erro ${errorItem.wrongCount||1}x · Acertos: ${errorItem.streak}/2</div>`
-    : `<div style="font-size:13px;color:var(--accent);margin-bottom:15px;font-weight:600;">⚡ Revisão Rápida · ${reviewSession.qIndex+1}/${reviewSession.questions.length}</div>`;
-  const wrapper = document.createElement('div');
-  const h3 = document.createElement('h3');
-  h3.style.cssText = 'margin-bottom:8px;font-size:22px;line-height:1.6;';
-  h3.innerHTML = headerText;
-  const qText = document.createElement('div');
-  qText.style.cssText = 'font-size:20px;margin-bottom:8px;line-height:1.5;font-weight:600;';
-  qText.textContent = qObj.text;
-  h3.appendChild(qText);
-  wrapper.appendChild(h3);
+  const text   = q.text || q.question || '';
+  const transl = q.translation || q.question_pt || '';
+  const opts   = q.options || [];
+  const correct = typeof q.correct === 'number' ? q.correct : 0;
+  const explain = q.explain || '';
 
-  // Fixed translation — no API call
-  if (qObj.translation || qObj.explain) {
-    const ptDiv = document.createElement('div');
-    ptDiv.style.cssText = 'font-size:13px;color:var(--muted);margin-bottom:16px;font-style:italic;padding:6px 0;border-bottom:1px solid var(--border);';
-    ptDiv.textContent = '🇧🇷 ' + (qObj.translation || qObj.explain);
-    wrapper.appendChild(ptDiv);
-  }
+  content.innerHTML = `
+    <div style="font-size:12px;color:var(--accent);margin-bottom:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">
+      ${_rev.mode === 'erros' ? '❌ Revisão de erros' : '🧠 Revisão'} · ${_rev.idx+1}/${_rev.questions.length}
+    </div>
+    <h3 style="font-size:20px;margin-bottom:8px;line-height:1.6;">${text}</h3>
+    ${transl ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">🇧🇷 ${transl}</div>` : '<div style="margin-bottom:16px;"></div>'}
+    <div id="rev-opts"></div>
+    <div id="rev-fb" style="display:none;margin-top:12px;padding:12px;border-radius:10px;font-size:14px;line-height:1.5;"></div>
+    <button id="rev-next" style="display:none;width:100%;margin-top:12px;" class="btn">
+      ${_rev.idx+1 < _rev.questions.length ? 'Próxima →' : 'Ver resultado'}
+    </button>`;
 
-  // Show hint and explain upfront in review mode
-  const cyrRe = /[А-яЁё]/;
-  const safeHint = qObj.hint && !cyrRe.test(qObj.hint) ? qObj.hint : null;
-  const safeExplain = qObj.explain && !cyrRe.test(qObj.explain) ? qObj.explain : null;
-  const safeTr = qObj.translation && !cyrRe.test(qObj.translation) ? qObj.translation : null;
-  if (safeHint || safeExplain || safeTr) {
-    const hintBox = document.createElement('div');
-    hintBox.style.cssText = 'background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;';
-    hintBox.innerHTML =
-      (safeTr ? '<div style="color:var(--muted);font-size:13px;margin-bottom:4px;">🇧🇷 ' + safeTr + '</div>' : '')
-      + (safeHint ? '<div style="color:var(--accent);font-size:13px;font-weight:700;margin-bottom:4px;">💡 ' + safeHint + '</div>' : '')
-      + (safeExplain ? '<div style="color:var(--muted);font-size:13px;">' + safeExplain + '</div>' : '');
-    wrapper.appendChild(hintBox);
-  }
-
-  content.appendChild(wrapper);
-
-  const optsContainer = document.createElement('div');
-  optsContainer.id = 'rev-options-container';
-
-  const options = qObj.options.map((opt, idx) => ({ text: opt, isCorrect: idx === qObj.correct }));
-  shuffle(options).forEach(opt => {
+  const optsEl = document.getElementById('rev-opts');
+  shuffle(opts.map((o, i) => ({ text: o, isCorrect: i === correct }))).forEach(opt => {
     const btn = document.createElement('button');
     btn.className = 'option-btn';
     btn.textContent = opt.text;
-    btn.onclick = () => checkReviewAnswer(btn, opt.isCorrect, errorItem.id);
-    optsContainer.appendChild(btn);
+    btn.addEventListener('click', () => _checkRevAnswer(btn, opt.isCorrect, correct, opts, explain, q));
+    optsEl.appendChild(btn);
   });
-  content.appendChild(optsContainer);
 
-  const fb = document.createElement('div');
-  fb.id = 'rev-feedback';
-  fb.className = 'feedback-box';
-  content.appendChild(fb);
-
-  const nextBtn = document.createElement('button');
-  nextBtn.id = 'rev-next-btn';
-  nextBtn.className = 'btn';
-  nextBtn.style.display = 'none';
-  nextBtn.textContent = 'Próxima Questão';
-  nextBtn.onclick = () => nextReviewQuestion();
-  content.appendChild(nextBtn);
-
-  if (qObj.type === 'cloze') speakRU(qObj.text.replace('____', '...'));
+  if (/[а-яА-ЯёЁ]/.test(text)) speakRU(text.replace(/____/g,'').replace(/\(.*?\)/g,''));
 }
 
-function checkReviewAnswer(btnElem, isCorrect, errorItemId) {
-  if (isReviewAnswered) return;
-  isReviewAnswered = true;
+function _checkRevAnswer(btnElem, isCorrect, correctIdx, opts, explain, q) {
+  const optsEl = document.getElementById('rev-opts');
+  if (!optsEl || optsEl.querySelector('.correct,.wrong')) return;
 
-  document.querySelectorAll('#rev-options-container .option-btn').forEach(btn => {
-    btn.disabled = true;
+  optsEl.querySelectorAll('.option-btn').forEach(b => {
+    b.disabled = true;
+    if (b.textContent === opts[correctIdx]) b.classList.add('correct');
   });
-
-  const fb = document.getElementById('rev-feedback');
-  fb.style.display = 'block';
-
-  const bankIndex = userData.errorBank.findIndex(e => e.id === errorItemId);
-  const qObj      = reviewSession.questions[reviewSession.qIndex].qObj;
+  if (!isCorrect) btnElem.classList.add('wrong');
 
   if (isCorrect) {
-    reviewSession.score = (reviewSession.score||0) + 1;
-    btnElem.classList.add('correct');
-    const revExplain = qObj.explain && !/[А-яЁё]/.test(qObj.explain) ? qObj.explain : '';
-    fb.innerHTML = '<div class="feedback-title" style="color:var(--primary);">✅ Exato!</div>'
-      + (revExplain ? '<p>' + revExplain + '</p>' : '');
-    if (bankIndex > -1) {
-      userData.errorBank[bankIndex].streak++;
-      if (userData.errorBank[bankIndex].streak >= 2) {
-        userData.errorBank.splice(bankIndex, 1);
-        fb.innerHTML += `<p style="margin-top:5px;color:var(--accent);">Questão dominada e removida da lista.</p>`;
+    _rev.score++;
+    playSound('correct');
+    if (userData.errorBank) {
+      const eIdx = userData.errorBank.findIndex(e => (e.qObj?.text||e.qObj?.question||'') === (q.text||q.question||''));
+      if (eIdx !== -1) {
+        userData.errorBank[eIdx].streak = (userData.errorBank[eIdx].streak||0) + 1;
+        if (userData.errorBank[eIdx].streak >= 2) userData.errorBank.splice(eIdx, 1);
+        saveData();
       }
     }
   } else {
-    btnElem.classList.add('wrong');
-    fb.innerHTML = `<div class="feedback-title" style="color:var(--error);">❌ Incorreto</div><p>${qObj.explain}</p>`;
-    if (bankIndex > -1) userData.errorBank[bankIndex].streak = 0;
+    playSound('wrong');
+    if (!userData.errorBank) userData.errorBank = [];
+    const eIdx = userData.errorBank.findIndex(e => (e.qObj?.text||e.qObj?.question||'') === (q.text||q.question||''));
+    if (eIdx !== -1) {
+      userData.errorBank[eIdx].wrongCount = (userData.errorBank[eIdx].wrongCount||1) + 1;
+      userData.errorBank[eIdx].streak = 0;
+    } else {
+      userData.errorBank.push({ id: Date.now(), qObj: q, wrongCount: 1, streak: 0, lastWrong: Date.now() });
+    }
+    saveData();
   }
 
-  saveData();
-  const nb = document.getElementById('rev-next-btn');
-  if (nb) nb.style.display = 'block';
-}
-
-function nextReviewQuestion() {
-  reviewSession.qIndex++;
-  renderReviewQuestion();
-}
-
-// ════════════════════════════════════════════════════════════
-//  TOAST NOTIFICATIONS
-// ════════════════════════════════════════════════════════════
-function showToast(message, duration = 4000) {
-  let toast = document.getElementById('app-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'app-toast';
-    toast.style.cssText = `
-      position:fixed; bottom:100px; left:50%; transform:translateX(-50%);
-      background:var(--card); color:var(--text); padding:12px 20px;
-      border-radius:10px; border:1px solid var(--border); font-size:14px;
-      font-weight:600; z-index:300; max-width:90vw; text-align:center;
-      box-shadow:0 4px 15px rgba(0,0,0,0.4); opacity:0;
-      transition:opacity 0.3s ease;`;
-    document.body.appendChild(toast);
-  }
-  toast.innerHTML = message;
-  toast.style.opacity = '1';
-  setTimeout(() => { toast.style.opacity = '0'; }, duration);
-}
-
-// ════════════════════════════════════════════════════════════
-//  INICIALIZAÇÃO
-// ════════════════════════════════════════════════════════════
-
-// ════════════════════════════════════════════════════════════
-//  SUBMÓDULOS TEMÁTICOS
-// ════════════════════════════════════════════════════════════
-let currentSubmod = null;
-let subCurrent = { questions: [], qIndex: 0, score: 0 };
-let isSubAnswered = false;
-
-function openSubmodules(modId, modTitle) {
-  currentSubmod = modId;
-  document.getElementById('submod-parent-title').innerText = '📚 ' + modTitle;
-  const list = document.getElementById('submodules-list');
-  list.innerHTML = '';
-
-  // ── Grammar summary ──
-  const grammar = grammarDB[String(modId)];
-  if (grammar) {
-    list.innerHTML += `<div class="grammar-section" style="margin-bottom:24px;">${grammar}</div>`;
+  const fb = document.getElementById('rev-fb');
+  if (fb) {
+    fb.style.display = 'block';
+    fb.style.background = isCorrect ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)';
+    fb.style.borderLeft = `3px solid ${isCorrect?'#22c55e':'#ef4444'}`;
+    fb.innerHTML = isCorrect
+      ? `✅ <strong>Correto!</strong>${explain ? ' '+explain : ''}`
+      : `❌ <strong>Incorreto.</strong> ${explain || 'A resposta era: <strong>'+opts[correctIdx]+'</strong>'}`;
   }
 
-  // ── Submodule cards ──
-  list.innerHTML += `<h3 style="color:var(--accent);margin-bottom:12px;font-size:15px;">📖 Submódulos — aprenda e pratique</h3>`;
-  const modSubs = submodulesData.filter(s => s.modId === modId);
-  modSubs.forEach(sub => {
-    const miniDone = (userData.completedSubmodules||[]).includes(sub.id + '_mini');
-    const quizDone = (userData.completedSubmodules||[]).includes(sub.id);
-    const status = quizDone ? 'completed' : 'unlocked';
-    list.innerHTML += `
-      <div class="module-card ${status}" style="flex-direction:column;align-items:stretch;gap:8px;cursor:default;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div>
-            <p style="color:var(--muted);font-size:12px;margin-bottom:2px;">${sub.words.length} palavras · ${sub.grammar}</p>
-            <h3 style="font-size:16px;">${sub.title}</h3>
-          </div>
-          <div style="font-size:20px;">${quizDone ? '✅' : miniDone ? '📝' : '📖'}</div>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button onclick="startMiniLesson('${sub.id}')" style="flex:1;background:var(--accent);color:var(--bg);border:none;padding:8px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">
-            ${miniDone ? '🔄 Rever aula' : '📖 Mini aula'}
-          </button>
-          <button onclick="startSublesson('${sub.id}','${sub.title.replace(/'/g,"\\'")}')" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
-            ${quizDone ? '🔄 Praticar' : '📝 Quiz'}
-          </button>
-        </div>
-      </div>`;
-  });
-
-  // ── Final exam button ──
-  const minisDone = modSubs.filter(s => (userData.completedSubmodules||[]).includes(s.id + '_mini')).length;
-  const examUnlocked = minisDone >= Math.ceil(modSubs.length / 2);
-  const modDone = userData.completedModules.includes(modId);
-  list.innerHTML += `
-    <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);">
-      ${modDone
-        ? `<div style="text-align:center;padding:16px;color:var(--primary);font-weight:700;">✅ Módulo concluído!</div>`
-        : examUnlocked
-          ? `<button class="btn" onclick="startFinalExam(${modId})" style="width:100%;">🎓 Prova Final do Módulo</button>
-             <p style="text-align:center;color:var(--muted);font-size:12px;margin-top:8px;">Precisa de 70% para passar · Só palavras que você estudou</p>`
-          : `<button class="btn" disabled style="width:100%;opacity:0.4;cursor:not-allowed;">🎓 Prova Final — faça ${Math.ceil(modSubs.length/2) - minisDone} mini aula(s) para liberar</button>`
-      }
-    </div>`;
-
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById('screen-submodules').classList.add('active');
+  const nextBtn = document.getElementById('rev-next');
+  if (nextBtn) {
+    nextBtn.style.display = 'block';
+    nextBtn.onclick = () => { _rev.idx++; _renderRevQ(); };
+  }
 }
+
+// Legacy stubs
+function startReviewSession() { startMainReview(); }
+function startSRSReview() { startMainReview(); }
+function startDailyReview() { startMainReview(); }
+function renderReviewQuestion() { _renderRevQ(); }
+function checkReviewAnswer() {}
+function nextReviewQuestion() { _rev.idx++; _renderRevQ(); }
+
+
 
 
 // ── i+1 validator: checks generated questions against allowed vocabulary ──
@@ -3145,13 +3040,12 @@ function buildSubFallback(words) {
 
 
 // ── Dialogue engine — two voices, no API ──
-window.speechSynthesis.onvoiceschanged = () => {};
-setTimeout(() => window.speechSynthesis.getVoices(), 500);
+if (typeof speechSynthesis !== "undefined") { window.speechSynthesis.onvoiceschanged = () => {}; setTimeout(() => (window.speechSynthesis ? window.speechSynthesis.getVoices() : []), 500); }
 
 let _currentDialogueLines = [];
 
 function speakDialogue(lines, onDone) {
-  window.speechSynthesis.cancel();
+  (window.speechSynthesis && window.speechSynthesis.cancel());
   _currentDialogueLines = lines;
   let i = 0;
   function next() {
@@ -3163,11 +3057,11 @@ function speakDialogue(lines, onDone) {
     utt.lang = 'ru-RU';
     utt.rate = 0.82;
     utt.pitch = line.pitch || 1.0;
-    const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith('ru'));
+    const voices = (window.speechSynthesis ? window.speechSynthesis.getVoices() : []).filter(v => v.lang.startsWith('ru'));
     if (voices.length >= 2) utt.voice = (line.pitch || 1) > 1 ? voices[1] : voices[0];
     else if (voices.length === 1) utt.voice = voices[0];
     utt.onend = () => setTimeout(next, 350);
-    window.speechSynthesis.speak(utt);
+    (window.speechSynthesis && window.speechSynthesis.speak(utt));
   }
   next();
 }
@@ -3847,7 +3741,7 @@ function migrateCachedQuestions() {
 
 window.onload = () => {
   // Invalidate old vague question cache — force regeneration with contextual prompt
-  const PROMPT_VER = 'v3_contextual';
+  const PROMPT_VER = 'v4_quality';
   if (localStorage.getItem('russo_prompt_ver') !== PROMPT_VER) {
     Object.keys(localStorage)
       .filter(k => k.startsWith('sub_pool_') || k.startsWith('sub_visits_'))
@@ -3896,6 +3790,401 @@ function exportAnki(mode) {
 }
 
 function exportTxt(){const q=JSON.parse(localStorage.getItem('russo_questions')||'[]');if(!q.length){alert('Complete alguns m\u00f3dulos primeiro.');return;}const txt=q.map(x=>x.text+'\nR: '+(x.options[x.correct]||'')+'\n'+x.explain).join('\n---\n');const b=new Blob([txt],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='questoes_russo.txt';a.click();}
+
+// ════════════════════════════════════════════════════════════
+//  PROVAS DE CERTIFICAÇÃO CEFR
+// ════════════════════════════════════════════════════════════
+const EXAM_LEVELS = [
+  { level: 'A1', label: 'A1 — Básico',       emoji: '🌱', modules: [1,2,3],    color: '#22c55e',
+    desc: 'Imperativo, pronomes, verbos de movimento básicos' },
+  { level: 'A2', label: 'A2 — Elementar',    emoji: '🌿', modules: [4,5,6,7],  color: '#3b82f6',
+    desc: 'Aspectos verbais, passado, futuro' },
+  { level: 'B1', label: 'B1 — Intermediário',emoji: '🌳', modules: [8,9,10],   color: '#f59e0b',
+    desc: 'Genitivo plural, adjetivos nos casos, datas' },
+  { level: 'B2', label: 'B2 — Avançado',     emoji: '🏔️', modules: [11,12],    color: '#a855f7',
+    desc: 'Prefixos de movimento, condicional' },
+];
+
+let _exam = { level: null, questions: [], idx: 0, score: 0, generating: false };
+
+function buildExamMenu() {
+  const menu = document.getElementById('exam-menu');
+  const content = document.getElementById('cert-exam-content');
+  content.innerHTML = '';
+
+  const passed = JSON.parse(localStorage.getItem('russo_certs') || '[]');
+
+  menu.innerHTML = EXAM_LEVELS.map(lv => {
+    const hasCert = passed.includes(lv.level);
+    return `
+    <div style="background:var(--card);border:1px solid ${hasCert ? lv.color : 'var(--border)'};border-radius:14px;padding:16px;margin-bottom:12px;${hasCert ? 'box-shadow:0 0 0 1px '+lv.color+'33;' : ''}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="font-size:20px;font-weight:700;color:${lv.color};">${lv.emoji} ${lv.label}</div>
+        ${hasCert ? `<div style="background:${lv.color}22;color:${lv.color};padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;">✓ Certificado</div>` : ''}
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">${lv.desc}</div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="startExam('${lv.level}')"
+          style="flex:1;background:${lv.color};color:#000;border:none;padding:10px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;">
+          ${hasCert ? '🔄 Refazer' : '📝 Iniciar Prova'}
+        </button>
+        ${hasCert ? `<button onclick="showCertificate('${lv.level}')"
+          style="flex:1;background:var(--surface);border:1px solid ${lv.color};color:${lv.color};padding:10px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">
+          🏆 Ver Certificado
+        </button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function startExam(level) {
+  if (_exam.generating) return;
+  _exam.generating = true;
+
+  const lv = EXAM_LEVELS.find(l => l.level === level);
+  const menuEl   = document.getElementById('exam-menu');
+  const content  = document.getElementById('cert-exam-content');
+  menuEl.style.display = 'none';
+
+  content.innerHTML = `
+    <div style="text-align:center;padding:40px;">
+      <div class="spinner"></div>
+      <p style="color:var(--muted);margin-top:16px;">Preparando prova ${lv.label}...</p>
+    </div>`;
+
+  // 0. Check exam-level cache first
+  const examCacheKey = 'exam_pool_' + level;
+  try {
+    const cached = JSON.parse(localStorage.getItem(examCacheKey) || '[]');
+    if (cached.length >= 20) {
+      console.log('[Exam] loaded from cache:', cached.length, 'questions');
+      _exam = { level, questions: shuffle(cached).slice(0, 20), idx: 0, score: 0, generating: false };
+      _exam.generating = false;
+      _renderExamQ();
+      return;
+    }
+  } catch(e) {}
+
+  // 1. Collect from localStorage cache
+  const subIds = submodulesData.filter(s => lv.modules.includes(s.modId)).map(s => s.id);
+  let pool = [];
+  const seen = new Set();
+  for (const subId of subIds) {
+    for (const key of ['sub_pool_' + subId, 'mini_q_' + subId]) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const qs = JSON.parse(raw);
+        if (!Array.isArray(qs)) continue;
+        for (const q of qs) {
+          const uid = q.text || q.question || '';
+          if (!uid || seen.has(uid)) continue;
+          if (!Array.isArray(q.options) || q.options.length < 2) continue;
+          if (typeof q.correct !== 'number') continue;
+          seen.add(uid);
+          pool.push(q);
+        }
+      } catch(e) {}
+    }
+  }
+
+  console.log('[Exam] cached pool:', pool.length, 'for level', level);
+
+  // 2. Always try to fill up to 20 via AI if API key available
+  if (userData.apiKey && pool.length < 20) {
+    const needed = 20 - pool.length;
+    const allLevelSubs = shuffle(submodulesData.filter(s => lv.modules.includes(s.modId)));
+    const sampleSubs = allLevelSubs.slice(0, 4);
+    const wordSample = sampleSubs
+      .flatMap(s => s.words.slice(0, 5).map(w => w.ru.split('/')[0].trim() + '=' + w.pt.split('/')[0].trim()))
+      .join(', ');
+
+    const makePrompt = (n) => `Gere ${n} questões de russo nível ${level} para brasileiro. Vocabulário: ${wordSample}
+
+PROIBIDO:
+- "text" em inglês (escreva SEMPRE em russo ou português)
+- questões de tradução direta ("Traduza X")
+- opções que diferem apenas por pronome (ele/ela/nós)
+- frases sem contexto situacional
+
+OBRIGATÓRIO — escolha um destes tipos por questão:
+1. CLOZE: frase russa real com ____ no lugar da palavra certa. Ex: "Я ____ в магазин каждый день." (options: иду/хожу/еду/езжу)
+2. SITUAÇÃO: descreva em PT uma situação e peça a expressão russa correta
+3. COMPREENSÃO: frase russa completa → pergunta em PT sobre o significado
+
+Cada opção deve ser plausível e distinta. Explique por que está certo.
+
+JSON array apenas, sem texto extra:
+[{"text":"frase em russo com ____ OU pergunta em PT","translation":"contexto da situação em PT","options":["opção A em russo","B","C","D"],"correct":0,"explain":"explicação PT clara"}]
+JSON:`;
+
+    const batches = needed > 10 ? 2 : 1;
+    for (let b = 0; b < batches; b++) {
+      if (b > 0) await new Promise(r => setTimeout(r, 2500));
+      const raw = await _fetchWithCascade(makePrompt(Math.min(10, needed)), 1500, null);
+      let items = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.questions) ? raw.questions : null);
+      if (items) {
+        const valid = items.filter(q => {
+          const t = (q.text || q.question || '').trim();
+          if (!t) return false;
+          if (!Array.isArray(q.options) || q.options.length < 2) return false;
+          if (typeof q.correct !== 'number') return false;
+          // Reject English text or translate-style questions
+          if (/^translate:/i.test(t)) return false;
+          if (/^[a-zA-Z]{4,}/.test(t)) return false; // starts with English word
+          if (/traduza:/i.test(t)) return false;
+          // Reject options that only differ by pronoun
+          const opts = q.options.map(o => o.trim());
+          const unique = new Set(opts.map(o => o.replace(/^(он|она|мы|вы|они|я|ты)\s+/i, '')));
+          if (unique.size <= 1) return false;
+          return true;
+        });
+        console.log('[Exam] AI batch', b, '->', valid.length, 'valid questions');
+        pool.push(...valid);
+      }
+    }
+  }
+
+  _exam.generating = false;
+  console.log('[Exam] final pool:', pool.length);
+
+  if (pool.length < 3) {
+    content.innerHTML = `
+      <div style="text-align:center;padding:30px;color:var(--muted);">
+        <div style="font-size:40px;margin-bottom:16px;">⚠️</div>
+        <p style="color:var(--text);margin-bottom:8px;font-weight:600;">Questões insuficientes.</p>
+        <p style="font-size:13px;margin-bottom:8px;">Cache encontrado: ${pool.length} questões nos módulos ${lv.modules.join(', ')}.</p>
+        <p style="font-size:13px;margin-bottom:20px;">Complete submódulos do nível ${lv.level} ou adicione uma API Key para gerar questões.</p>
+        <button class="btn" onclick="document.getElementById('exam-menu').style.display='';document.getElementById('cert-exam-content').innerHTML='';" style="width:100%;">← Voltar</button>
+      </div>`;
+    return;
+  }
+
+  // Save to exam cache for future use (keep up to 40 questions for variety)
+  try {
+    const existing = JSON.parse(localStorage.getItem(examCacheKey) || '[]');
+    const merged = [...existing, ...pool].filter((q, i, arr) => {
+      const uid = q.text || q.question || '';
+      return uid && arr.findIndex(x => (x.text || x.question) === uid) === i;
+    });
+    localStorage.setItem(examCacheKey, JSON.stringify(merged.slice(0, 40)));
+    console.log('[Exam] saved', merged.length, 'questions to cache');
+  } catch(e) {}
+
+  _exam = { level, questions: shuffle(pool).slice(0, 20), idx: 0, score: 0, generating: false };
+  _renderExamQ();
+}
+
+function _renderExamQ() {
+  // Only force screen if not already active (avoid interrupting other screens)
+  const examScreen = document.getElementById('screen-exam');
+  if (!examScreen.classList.contains('active')) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    examScreen.classList.add('active');
+  }
+  document.getElementById('exam-menu').style.display = 'none';
+
+  const content = document.getElementById('cert-exam-content');
+  const lv = EXAM_LEVELS.find(l => l.level === _exam.level);
+  if (!content || !lv) { console.error('[Exam] missing content or lv'); return; }
+
+  console.log('[Exam] rendering q', _exam.idx, '/', _exam.questions.length);
+  content.innerHTML = '';
+
+  // ── Results screen ──
+  if (_exam.idx >= _exam.questions.length) {
+    const total = _exam.questions.length;
+    const pct   = Math.round(_exam.score / total * 100);
+    const passed = pct >= 70;
+    if (passed) {
+      const certs = JSON.parse(localStorage.getItem('russo_certs') || '[]');
+      if (!certs.includes(_exam.level)) { certs.push(_exam.level); localStorage.setItem('russo_certs', JSON.stringify(certs)); }
+      localStorage.setItem('russo_cert_' + _exam.level, JSON.stringify({
+        level: _exam.level, label: lv.label, score: pct,
+        date: new Date().toLocaleDateString('pt-BR'), emoji: lv.emoji, color: lv.color
+      }));
+    }
+    const div = document.createElement('div');
+    div.style.cssText = 'text-align:center;padding:30px;';
+    div.innerHTML = (passed ? '<div style="font-size:60px;margin-bottom:12px;">🏆</div>' : '<div style="font-size:60px;margin-bottom:12px;">📖</div>') +
+      '<h2 style="color:' + (passed ? lv.color : 'var(--muted)') + ';">' + (passed ? 'Aprovado!' : 'Não aprovado') + '</h2>' +
+      '<p style="font-size:32px;font-weight:700;color:' + lv.color + ';margin:12px 0;">' + pct + '%</p>' +
+      '<p style="color:var(--muted);margin-bottom:24px;">' + _exam.score + ' de ' + total + ' corretas · mínimo 70%</p>';
+    if (passed) {
+      const certBtn = document.createElement('button');
+      certBtn.className = 'btn';
+      certBtn.style.cssText = 'width:100%;background:' + lv.color + ';color:#000;margin-bottom:10px;';
+      certBtn.textContent = '🏆 Ver & Baixar Certificado';
+      certBtn.onclick = () => showCertificate(_exam.level);
+      div.appendChild(certBtn);
+    } else {
+      const msg = document.createElement('p');
+      msg.style.cssText = 'color:var(--muted);font-size:14px;margin-bottom:20px;';
+      msg.textContent = 'Continue estudando os módulos ' + lv.modules.join(', ') + ' e tente novamente.';
+      div.appendChild(msg);
+    }
+    const backBtn = document.createElement('button');
+    backBtn.className = 'btn btn-outline';
+    backBtn.style.width = '100%';
+    backBtn.textContent = '← Voltar às provas';
+    backBtn.onclick = () => { document.getElementById('exam-menu').style.display = ''; content.innerHTML = ''; buildExamMenu(); };
+    div.appendChild(backBtn);
+    content.appendChild(div);
+    return;
+  }
+
+  // ── Question screen ──
+  const q = _exam.questions[_exam.idx];
+  if (!q) { _exam.idx++; _renderExamQ(); return; }
+
+  const text    = q.text || q.question || '';
+  const transl  = q.translation || q.question_pt || '';
+  const opts    = q.options || [];
+  const correct = typeof q.correct === 'number' ? q.correct : 0;
+  const explain = q.explain || '';
+  const progress = Math.round((_exam.idx / _exam.questions.length) * 100);
+
+  // Progress bar
+  const progDiv = document.createElement('div');
+  progDiv.style.marginBottom = '16px';
+  progDiv.innerHTML = '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:6px;">' +
+    '<span style="color:' + lv.color + ';font-weight:700;">' + lv.emoji + ' Prova ' + lv.label + '</span>' +
+    '<span>' + (_exam.idx + 1) + '/' + _exam.questions.length + '</span></div>' +
+    '<div style="background:var(--surface);border-radius:4px;height:4px;">' +
+    '<div style="background:' + lv.color + ';height:4px;border-radius:4px;width:' + progress + '%;transition:width .3s;"></div></div>';
+  content.appendChild(progDiv);
+
+  // Question text
+  const h3 = document.createElement('h3');
+  h3.style.cssText = 'font-size:20px;margin-bottom:8px;line-height:1.6;';
+  h3.textContent = text;
+  content.appendChild(h3);
+
+  // Translation
+  if (transl) {
+    const tr = document.createElement('div');
+    tr.style.cssText = 'font-size:13px;color:var(--muted);margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);';
+    tr.textContent = '🇧🇷 ' + transl;
+    content.appendChild(tr);
+  }
+
+  // Options
+  const optsEl = document.createElement('div');
+  optsEl.id = 'exam-opts';
+  shuffle(opts.map((o, i) => ({ text: o, isCorrect: i === correct }))).forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.textContent = opt.text;
+    btn.addEventListener('click', () => {
+      if (optsEl.querySelector('.correct,.wrong')) return;
+      optsEl.querySelectorAll('.option-btn').forEach(b => {
+        b.disabled = true;
+        if (b.textContent === opts[correct]) b.classList.add('correct');
+      });
+      if (!opt.isCorrect) btn.classList.add('wrong');
+      else _exam.score++;
+      opt.isCorrect ? playSound('correct') : playSound('wrong');
+
+      const fb = document.createElement('div');
+      fb.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;font-size:14px;line-height:1.5;' +
+        'background:' + (opt.isCorrect ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)') + ';' +
+        'border-left:3px solid ' + (opt.isCorrect ? '#22c55e' : '#ef4444') + ';';
+      fb.innerHTML = opt.isCorrect
+        ? '<strong>✅ Correto!</strong>' + (explain ? ' ' + explain : '')
+        : '<strong>❌ Incorreto.</strong> ' + (explain || 'A resposta era: ' + opts[correct]);
+      content.appendChild(fb);
+
+      const nx = document.createElement('button');
+      nx.className = 'btn';
+      nx.style.cssText = 'width:100%;margin-top:12px;';
+      nx.textContent = _exam.idx + 1 < _exam.questions.length ? 'Próxima →' : 'Ver resultado';
+      nx.onclick = () => { _exam.idx++; _renderExamQ(); };
+      content.appendChild(nx);
+    });
+    optsEl.appendChild(btn);
+  });
+  content.appendChild(optsEl);
+
+  if (/[а-яА-ЯёЁ]/.test(text)) speakRU(text.replace(/____/g, '').replace(/\(.*?\)/g, ''));
+}
+
+
+function showCertificate(level) {
+  const data = JSON.parse(localStorage.getItem('russo_cert_' + level) || 'null');
+  if (!data) return;
+  const lv = EXAM_LEVELS.find(l => l.level === level);
+
+  // Ask for name before opening certificate
+  const name = prompt('Seu nome para o certificado (pode deixar em branco):', localStorage.getItem('russo_cert_name') || '');
+  if (name === null) return; // cancelled
+  if (name.trim()) localStorage.setItem('russo_cert_name', name.trim());
+  const displayName = name.trim() || 'Estudante';
+
+  const certHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Certificado ${data.level} — Russo</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@400;600&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#f8f5ee; display:flex; align-items:center; justify-content:center; min-height:100vh; font-family:'Inter',sans-serif; }
+  .cert { width:800px; background:#fff; border:3px solid ${data.color}; border-radius:16px; padding:60px; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,.15); position:relative; }
+  .cert::before { content:''; position:absolute; inset:8px; border:1px solid ${data.color}44; border-radius:12px; pointer-events:none; }
+  .logo { font-size:48px; margin-bottom:8px; }
+  .app-name { font-size:13px; letter-spacing:4px; text-transform:uppercase; color:#888; margin-bottom:40px; }
+  .certifies { font-size:14px; letter-spacing:2px; text-transform:uppercase; color:#888; margin-bottom:8px; }
+  .level-badge { display:inline-block; background:${data.color}18; color:${data.color}; border:2px solid ${data.color}; border-radius:16px; padding:16px 48px; font-family:'Playfair Display',serif; font-size:52px; font-weight:700; margin:20px 0; }
+  .level-name { font-family:'Playfair Display',serif; font-size:28px; color:#333; margin-bottom:8px; }
+  .score { font-size:16px; color:#666; margin-bottom:40px; }
+  .divider { width:80px; height:3px; background:${data.color}; margin:0 auto 32px; border-radius:2px; }
+  .desc { font-size:14px; color:#888; line-height:1.8; max-width:500px; margin:0 auto 40px; }
+  .footer { display:flex; justify-content:space-between; align-items:flex-end; margin-top:20px; }
+  .date-block { text-align:left; }
+  .date-label { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:#aaa; }
+  .date-val { font-size:16px; color:#555; font-weight:600; }
+  .seal { width:80px; height:80px; border-radius:50%; background:${data.color}18; border:2px solid ${data.color}; display:flex; align-items:center; justify-content:center; font-size:32px; }
+  .standard { font-size:11px; color:#aaa; letter-spacing:1px; text-transform:uppercase; }
+  .student-name { font-family:'Playfair Display',serif; font-size:28px; color:#333; margin:6px 0 2px; font-style:italic; }
+  @media print { body { background:#fff; } .cert { box-shadow:none; } .print-btn { display:none; } }
+</style>
+</head>
+<body>
+<div class="cert">
+  <div class="logo">🇷🇺</div>
+  <div class="app-name">Russo App</div>
+  <div class="certifies">Certifica que</div>
+  <div class="student-name">${displayName}</div>
+  <div class="certifies" style="margin-top:4px;">atingiu o nível</div>
+  <div class="level-badge">${data.emoji} ${data.level}</div>
+  <div class="level-name">${data.label.split('—')[1].trim()}</div>
+  <div class="score">Resultado: ${data.score}% de aproveitamento</div>
+  <div class="divider"></div>
+  <div class="desc">
+    Demonstrou proficiência em língua russa conforme os descritores<br>
+    do <strong>Quadro Europeu Comum de Referência (CEFR)</strong>
+  </div>
+  <div class="footer">
+    <div class="date-block">
+      <div class="date-label">Data</div>
+      <div class="date-val">${data.date}</div>
+    </div>
+    <div style="text-align:center;">
+      <div class="standard">CEFR · TORFL</div>
+    </div>
+    <div class="seal">${data.emoji}</div>
+  </div>
+</div>
+<button class="print-btn" onclick="window.print()" style="position:fixed;bottom:24px;right:24px;background:${data.color};color:#000;border:none;padding:12px 24px;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,.2);">
+  🖨️ Imprimir / Salvar PDF
+</button>
+</body></html>`;
+
+  const blob = new Blob([certHtml], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+}
+
 </script>
 </body>
 </html>
